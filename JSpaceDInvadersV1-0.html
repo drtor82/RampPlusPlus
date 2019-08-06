@@ -1,0 +1,395 @@
+<!DOCTYPE html>
+<html>
+    <head>
+        <meta charset="utf-8" />
+        <title>JSpaceD Invaders v0.6</title>
+        <style>
+            * { padding: 0; margin: 0;}
+            canvas { background: rgb(000, 000, 000); display: block; margin: 0 auto; }
+        </style>
+    </head>
+<body>
+    <center>
+        <h1>JSpaceD Invaders</h1>
+        by Don Torres<br>
+        
+        <canvas id="gameWindow" width="640" height="480"></canvas>
+
+        <h3>Game Controls:</h3>
+        <ul>
+            <li>Up Arrow : Starts / Pauses the game</li>
+            <li>"A" or Left Arrow : Moves the Gunship left</li>
+            <li>"D" or Right Arrow : Moves the Gunship right</li>
+            <li>Space Bar or Down Arrow : Shoots Missile</li>
+            <li>Only one missile can be fired at a time</li>
+        </ul>
+    </center>
+
+<script> /////////////// Begin Game Code Here ///////////////
+
+////////// ----- Game Variables ----- //////////
+// NOTE: Some functions have variables that need to be stored globally.
+//       These variables are declared right above their function
+// Global Variables
+    var canvas = document.getElementById("gameWindow");
+    var ctx = canvas.getContext("2d");
+    var playGame = false; // Game Paused or Running
+    // var endDelay = 50 // ms*10 to endScreen
+    var boomDraw = 5; // Implement a copy track system in drawBoom function
+    var score = 0;
+    var lives = 3;
+    var fieldWidth = 224;// must be an even number
+    var layers = 150; // Field Depth (10 Layers per row)
+        /* Tracked from foreground to background
+        Row 0 = Players row
+        Row 1 = Base Shield's row / Invaded Row
+        Rows 2 to 12 = Alien invasion rows
+        Row 13 = Bonus Alien row
+        Row 14 = Delay zone for missed shots
+        */
+    var speed = 10; // The lower the number the faster the game
+    var interval = setInterval(game,speed); // Draws next frame
+
+// Player Variables
+    var rightPressed = false;
+    var leftPressed = false;
+    var playerX = fieldWidth/2; // Player's relation to battlefield (fieldWidth)
+                    // Starting point is center of field (112)
+    var shotX = playerX;
+    var shooting = false;
+    var missileLayer = layers;
+    var toBonus = 15;
+
+// Alien Variables
+    var alienColumnCount = 11; // default 11
+    var alienRowCount = 5; //default 5
+    var aliensLeft = alienColumnCount * alienRowCount; // determines the speed of aliens
+    var alco = 2; // alien speed coefficient
+    var alienSpeed = alco * aliensLeft; // The higher the number, the slower they move
+    var alienX = 9; // starts aliens in the left corner of the field just shy of the wall
+    var alienZ = 30;// Layers starting at 3rd row from the back
+    var aliensAdvancing  = false;
+    var lowInvader = 0; // indicates closest invader
+    var aliens = []; // Tracks aliens in 2D array, stored as objects
+                    // Refer to Initial Game Construction for details
+    var bonAlien = {'status' : 0, 'points': 200, 'finished' : false, 'y' : 0, 'x': fieldWidth};
+
+////////// ----- Game Controls ----- //////////
+
+///// ----- Initial Game Construction ----- /////
+// Alien Array
+function points(r){ // Prep code for point assignment in creation below
+  if (r == 1) return 30;
+  if (r == 2 || r == 3) return 20;
+  return 10;
+}
+// Alien Stats Creation
+  /* if at row 0, create a column tracker object that records how many aliens are alive in column
+    at aliens[Col][0]: {'howMany' : alienRowCount}
+    else alien{'points': 30/20/10, 'status' : 0/1 , 'finished' : false}
+                                    0:dead,1:Alive   finished exploding? */
+var aliensInRow = [];
+for (var c = 0; c < alienColumnCount; c++){
+  aliens[c] = [];
+  for (var r = 0; r <= alienRowCount; r++){
+    if (r === 0) aliens[c][0] = {'howMany': alienRowCount};
+    else {
+        aliens[c][r] = {'points' : points(r), 'status' : 1, 'finished' : false};
+    }
+  }
+}
+for (var r = 0; r < alienRowCount; r++) aliensInRow.push(alienColumnCount);
+
+// Player Controls
+    // Listening for player interaction
+    document.addEventListener("keydown", keyDownHandler, false);
+    document.addEventListener("keyup", keyUpHandler, false);
+    
+    // Player control handling
+function keyDownHandler(e) {
+    console.log(e.key);
+    if (e.key == "Right" || e.key == "ArrowRight" || e.key == "d") {
+      rightPressed = true;
+    }
+    else if (e.key == "Left" || e.key == "ArrowLeft" || e.key == "a") {
+      leftPressed = true;
+    }
+    else if (e.key == "Up" || e.key == "ArrowUp") {
+        playGame == false ? playGame = true : playGame = false;
+	}
+    else if (e.key == "Down" || e.key == "ArrowDown" || e.key == " ") {
+        if (shooting == false && playGame == true){
+            shooting = true;
+            shotX = playerX; // Sets Missile's field position
+            toBonus--;
+            if (!toBonus && !bonAlien.status){
+                console.log("Making Bonus Alien");
+                bonAlien.status = 1;
+                toBonus = 23;
+            }
+        }
+    }
+
+    ////////////////// DEBUG CONTROLS TO REMOVE LATER /////////////////////////////////////
+    else if (e.key == "p") { // Stops game for debugging
+      clearInterval(interval);
+    }
+    ////////////////////// END DEBUG CONTROLS //////////////////////////////////
+}
+function keyUpHandler(e) {
+    if (e.key == "Right" || e.key == "ArrowRight" || e.key == "d") {
+        rightPressed = false;
+    }
+    else if (e.key == "Left" || e.key == "ArrowLeft" || e.key == "a") {
+        leftPressed = false;
+    }
+}
+
+///// ----- Update Game Status ----- /////
+// Update each frame is called in the "draw" function
+
+// Game Status
+function updateGame(){
+    updatePlayerX();
+    updateMissile();
+}
+
+// Player:Field Position
+function updatePlayerX(){ // Update Player:Field Position
+    if (playGame){
+        if (leftPressed && playerX > 0)  playerX--;
+        if (rightPressed && playerX < fieldWidth)  playerX++;
+    }
+}
+
+// Missile Functions
+function updateMissile(){
+    if (playGame && shooting){
+        missileLayer--;
+        if (missileLayer <= 0){ // if true, shot has missed
+            missileLayer = layers;
+            shooting = false;
+        }
+    }
+}
+
+function missileHit(alien,col,row){
+    score += alien.points;
+    alien.status = false;
+    aliens[col][0].howMany -= 1;
+    aliensInRow[row] -= 1;
+    shooting = false;
+    missileLayer = layers;
+    aliensLeft--;
+}
+
+// Alien Position and movement
+var alienWait = alienSpeed;
+var alienDir = "right";
+function leftLimit(){ // How far left can aliens move
+    for (var c = 0; c < alienColumnCount; c++){
+        if (aliens[c][0].howMany !== 0) return -c*20+8;
+    }
+}
+function rightLimit(){ // How far right can aliens move
+    for (var c = alienColumnCount; c > 0; c--){
+        if (aliens[c-1][0].howMany !== 0) return fieldWidth - ((c-1)*20+8);
+    }
+}
+function alienAdvance(){
+    aliensAdvancing === false && !(alienZ % 10) ? aliensAdvancing = true : aliensAdvancing = false;
+    if (aliensAdvancing) alienZ += 10;
+    for (var front = alienRowCount-1; front >= 0; front--) {
+        if (aliensInRow[front] && !aliensInRow[front+1]) {
+            lowInvader = front*10 + alienZ;
+            break;
+        }
+    }
+    if (lowInvader >= layers) {
+        alert("GAME OVER");
+        location.reload();
+    }
+}
+
+function moveAliens(){
+if (playGame){
+    alienSpeed = alco * aliensLeft;
+    if (alienWait){
+        alienWait--;
+        if (!alienWait){
+            if (alienX >= rightLimit()){
+                alienAdvance();
+                alienDir = "left";
+            }
+            if (alienX <= leftLimit()){
+                alienAdvance();
+                alienDir = "right";
+            }
+            if (!aliensAdvancing) alienDir === "right" ? alienX++ : alienX--;
+        }
+    } else alienWait = alienSpeed;
+    if (!aliensLeft){
+        alert("Level Cleared!");
+        location.reload();
+    }
+}}
+
+// Alien Shooting
+// How many shots are available? Only three shots on the battlefield at a time
+// if less than three shots are on the field
+// randomly pick alien who shoots
+// must be the lowest alien in its column
+
+
+////////// ----- Drawing the Game ----- //////////
+
+function baseX(onfieldX,thisDepth){
+        return ((onfieldX - playerX) * (13*(thisDepth/(layers-10))) + (canvas.width/2));
+}
+
+// Drawing Background
+function drawBG() {
+    ctx.fillStyle = "#000000"
+    ctx.fillRect(0,0, canvas.width, canvas.height);
+  // Draw stars in later
+      // create blinking stars
+}
+
+// Drawing Aliens and Missile
+function alienColor(row){
+    if (row == 1) return "#FF1111";
+    else if (row == 2 || row == 3) return "#00FF00";
+    else return "#0000FF";
+}
+
+function drawBonus(){
+    // draw bonus alien
+    /*
+    bonus status 0 does not exist
+    status 1 exists and flying in
+    status 2 flying across the firing zone
+    status 3 flying away
+        Alien "flies in from above" starting at the right and runs behind
+        all the other aliens then "flies away and down" when it makes it to the left
+    */
+    if (bonAlien.status == 1){
+        bonAlien.y < canvas.height/2 ? bonAlien.y += 1 : bonAlien.status = 2;
+    } else if (bonAlien.status == 2) {
+        bonAlien.x <= 0 ? bonAlien.status = 3 : bonAlien.x -= 1;
+    } else if (bonAlien.status == 3 && bonAlien.y > canvas.height) {
+        bonAlien.status = 0;
+    }
+}
+
+function drawField() {
+    moveAliens();
+    // if (bonusAlien) drawBonus();
+
+    // Draw Aliens/Missile starting from the back
+    for (var r = 0; r <= alienRowCount; r++){
+//        if (shooting && missileLayer < alienZ) drawMissile(); // draws missile in behind aliens
+        if (r !=0){ // Row 0 is used for column Control/Tracking
+            for (var c = 0; c < alienColumnCount; c++){
+                if (aliens[c][r].status === 1){ // alienAlive test
+                    ctx.beginPath();
+                    ctx.arc(baseX(c*20+alienX,alienZ + r*10),240,180*((alienZ + r*10)/(layers*3)),0,Math.PI*2);
+                    ctx.fillStyle = alienColor(r);
+                    ctx.fill();
+                    ctx.strokeStyle = '#AAAAAA';
+                    ctx.stroke();
+                    ctx.closePath();
+                    if (missileLayer >= alienZ+r*10 && missileLayer < alienZ+r*10+5 && Math.abs(shotX - (c*20+alienX)) <= 8) missileHit(aliens[c][r],c,r-1);
+                } else { // Alien is dead
+                    if (aliens[c][r].finished === false) drawBoom(aliens[c][r]);
+                }
+            }
+        }
+        // missile draw if in layers
+        if (shooting && (missileLayer >= r*10 && missileLayer < r*10+9) || missileLayer > (r+1)*10) drawMissile();
+    }
+}
+
+// Drawing Explosion
+var exploding = boomDraw;
+function drawBoom(target){
+    // draw random explosion
+    exploding--;
+    if (!exploding && !target.finished){
+        console.log("BOOM!");
+        target.finished = true;
+        exploding = boomDraw;
+    }
+}
+
+// Drawing Missile
+function missileFlame(){
+    var letters = "0123456789ABCDEF"; 
+    var color = '#'; 
+    for (var i = 0; i < 6; i++)
+      i < 4 ? color += letters[15 - (Math.floor(Math.random() * 4))] : color += letters[(Math.floor(Math.random() * 16))]; 
+    return color;
+}
+function drawMissile(){
+    if (shooting){
+        ctx.beginPath();
+        ctx.arc(baseX(shotX,missileLayer),240,(missileLayer/4),0,Math.PI*2); // default radius missileLayer/5
+        ctx.fillStyle='#777777';
+        ctx.fill();
+        ctx.closePath();
+        for (let f = 6; f < 15 ; f++){ // Draw missile flame
+            ctx.beginPath();
+            ctx.arc(baseX(shotX,missileLayer),240,(missileLayer/f),0,Math.PI*2);
+            ctx.fillStyle= missileFlame();
+            ctx.fill();
+            ctx.closePath();
+        }
+    }
+}
+
+// Draw Player Interface
+function drawHMI() {
+//Drawing Cockpit
+    // Reticle
+        ctx.beginPath();
+        ctx.rect(canvas.width/2 - 1, canvas.height/2 - 30 , 2, 20);//Top
+        ctx.rect(canvas.width/2 - 1, canvas.height/2 + 10 , 2, 20);//Bottom
+        ctx.rect(canvas.width/2 - 30, canvas.height/2 - 1 , 20, 2);//Left
+        ctx.rect(canvas.width/2 + 10, canvas.height/2 - 1 , 20, 2);//Right
+        ctx.fillStyle = "#0095DD";
+        ctx.fill();
+        ctx.closePath();
+// Player Data
+    // Draw Score
+        ctx.font = "16px Arial";
+        ctx.fillStyle = "#FFFFFF";
+        ctx.textAlign = "center"; 
+        ctx.fillText("Score", 320, 80);
+        ctx.fillText(score, 320, 100);
+    // Draw Lives
+        ctx.fillStyle = "#0095DD";
+        ctx.textAlign = "right"; 
+        ctx.fillText("Lives: "+lives, canvas.width-8, 20);
+    // Draw Target Guidance
+        ctx.fillStyle = "#FF0000";
+        ctx.textAlign = "center"; 
+        ctx.fillText("Distance until Unsafe Launching", 320, 20);
+        !lowInvader ? ctx.fillText("Scanning for distance", 320, 36) : ctx.fillText(layers-lowInvader + " yards", 320, 36);
+    // Draw Game Status
+        ctx.textAlign = "left"; 
+        playGame == true ? ctx.fillText("Game on!", 8, 20) : ctx.fillText("Game Paused", 8, 20);
+}
+
+// Draw End Screen
+
+// Draw and Operations
+function game(){
+    updateGame(); // Update status and trackers
+    drawBG();
+    drawField();
+    drawHMI();
+}
+
+
+</script>
+</body>
+</html>
